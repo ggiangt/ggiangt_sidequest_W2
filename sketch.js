@@ -33,7 +33,20 @@ let blob3 = {
   // Friction
   frictionAir: 0.995, // Light friction in air
   frictionGround: 0.88, // Stronger friction on ground
+
+  // MISCHIEF & EMOTION SYSTEM
+  stolenItems: 0, // Number of items stolen
+  guilt: 0, // Anxiety level (0-1)
+  nervousShake: 0, // Current nervous shake offset
+  idleTime: 0, // How long blob has been still
+  nearItem: false, // Is blob near a stealable item?
 };
+
+// Stealable objects scattered around the map
+let items = [];
+
+// Visual effects (sweat drops, exclamation marks)
+let effects = [];
 
 // List of solid platforms the blob can stand on
 // Each platform is an axis-aligned rectangle (AABB)
@@ -60,6 +73,73 @@ function setup() {
 
   // Start the blob resting on the floor
   blob3.y = floorY3 - blob3.r - 1;
+
+  // Scatter stealable items on platforms
+  items = [
+    {
+      x: 60,
+      y: floorY3 - 25,
+      vx: 0,
+      vy: 0,
+      size: 10,
+      type: "coin",
+      stolen: false,
+    },
+    {
+      x: 180,
+      y: floorY3 - 95,
+      vx: 0,
+      vy: 0,
+      size: 12,
+      type: "gem",
+      stolen: false,
+    },
+    {
+      x: 340,
+      y: floorY3 - 145,
+      vx: 0,
+      vy: 0,
+      size: 10,
+      type: "coin",
+      stolen: false,
+    },
+    {
+      x: 360,
+      y: floorY3 - 145,
+      vx: 0,
+      vy: 0,
+      size: 8,
+      type: "star",
+      stolen: false,
+    },
+    {
+      x: 500,
+      y: floorY3 - 205,
+      vx: 0,
+      vy: 0,
+      size: 14,
+      type: "gem",
+      stolen: false,
+    },
+    {
+      x: 560,
+      y: floorY3 - 95,
+      vx: 0,
+      vy: 0,
+      size: 10,
+      type: "coin",
+      stolen: false,
+    },
+    {
+      x: 220,
+      y: floorY3 - 25,
+      vx: 0,
+      vy: 0,
+      size: 8,
+      type: "star",
+      stolen: false,
+    },
+  ];
 }
 
 function draw() {
@@ -71,11 +151,32 @@ function draw() {
     rect(p.x, p.y, p.w, p.h);
   }
 
-  // --- Input: left/right movement ---
+  // --- Update guilt level based on stolen items (0 = calm, 1 = max panic) ---
+  blob3.guilt = constrain(blob3.stolenItems / 4, 0, 1);
+
+  // --- Nervous shake increases with guilt ---
+  blob3.nervousShake = sin(frameCount * 0.3) * blob3.guilt * 3;
+
+  // --- Track idle time for spontaneous nervous behavior ---
+  if (abs(blob3.vx) < 0.5 && blob3.onGround) {
+    blob3.idleTime++;
+    // Spontaneous nervous hop when anxious and idle
+    if (blob3.idleTime > 60 && blob3.guilt > 0.3 && random() < 0.02) {
+      blob3.vy = -6;
+      blob3.idleTime = 0;
+    }
+  } else {
+    blob3.idleTime = 0;
+  }
+
+  // --- Input: left/right movement (jittery when guilty) ---
   let move = 0;
   if (keyIsDown(65) || keyIsDown(LEFT_ARROW)) move -= 1; // A or ←
   if (keyIsDown(68) || keyIsDown(RIGHT_ARROW)) move += 1; // D or →
-  blob3.vx += blob3.accel * move;
+
+  // Add random jitter to movement when guilty
+  let jitter = random(-blob3.guilt * 0.3, blob3.guilt * 0.3);
+  blob3.vx += blob3.accel * move + jitter;
 
   // --- Apply friction and clamp speed ---
   blob3.vx *= blob3.onGround ? blob3.frictionGround : blob3.frictionAir;
@@ -135,7 +236,146 @@ function draw() {
   // Keep blob inside the canvas horizontally
   blob3.x = constrain(blob3.x, blob3.r, width - blob3.r);
 
-  // --- Draw the animated blob ---
+  // --- MISCHIEF MECHANICS: Item physics and stealing ---
+  blob3.nearItem = false;
+
+  for (let item of items) {
+    if (item.stolen) continue;
+
+    // Calculate distance to blob
+    let d = dist(blob3.x, blob3.y, item.x, item.y);
+
+    // STEAL: If blob is close enough, absorb the item
+    if (d < blob3.r + item.size) {
+      item.stolen = true;
+      blob3.stolenItems++;
+
+      // Visual feedback: Create panic effect
+      effects.push({
+        x: item.x,
+        y: item.y,
+        life: 30,
+        type: "sweat",
+      });
+
+      // Blob jolts from excitement/anxiety
+      blob3.vy = -3;
+      continue;
+    }
+
+    // DETECT NEARBY: Blob gets nervous near items
+    if (d < 60) {
+      blob3.nearItem = true;
+    }
+
+    // BUMP PHYSICS: Items get knocked around by blob
+    if (d < blob3.r + item.size + 15) {
+      let angle = atan2(item.y - blob3.y, item.x - blob3.x);
+      let pushForce = 2;
+      item.vx += cos(angle) * pushForce;
+      item.vy += sin(angle) * pushForce;
+    }
+
+    // Apply gravity to items
+    item.vy += 0.4;
+
+    // Apply velocity
+    item.x += item.vx;
+    item.y += item.vy;
+
+    // Friction
+    item.vx *= 0.9;
+
+    // Platform collision for items
+    for (const p of platforms) {
+      let itemBox = {
+        x: item.x - item.size / 2,
+        y: item.y - item.size / 2,
+        w: item.size,
+        h: item.size,
+      };
+
+      if (overlap(itemBox, p)) {
+        if (item.vy > 0) {
+          item.y = p.y - item.size / 2;
+          item.vy = 0;
+        }
+      }
+    }
+
+    // Keep items in bounds
+    if (item.x < item.size) {
+      item.x = item.size;
+      item.vx *= -0.5;
+    }
+    if (item.x > width - item.size) {
+      item.x = width - item.size;
+      item.vx *= -0.5;
+    }
+  }
+
+  // --- Draw items ---
+  for (let item of items) {
+    if (item.stolen) continue;
+
+    // Items glow/pulse when blob is near
+    let nearGlow =
+      blob3.nearItem && dist(blob3.x, blob3.y, item.x, item.y) < 60;
+
+    push();
+    translate(item.x, item.y);
+
+    if (item.type === "coin") {
+      fill(255, 220, 0, nearGlow ? 255 : 200);
+      ellipse(0, 0, item.size, item.size);
+      fill(255, 240, 100);
+      ellipse(0, 0, item.size * 0.5, item.size * 0.5);
+    } else if (item.type === "gem") {
+      fill(255, 100, 200, nearGlow ? 255 : 200);
+      rotate(frameCount * 0.02);
+      for (let i = 0; i < 6; i++) {
+        rotate(PI / 3);
+        triangle(0, -item.size / 2, item.size / 3, 0, -item.size / 3, 0);
+      }
+    } else if (item.type === "star") {
+      fill(100, 255, 255, nearGlow ? 255 : 200);
+      rotate(frameCount * 0.03);
+      for (let i = 0; i < 5; i++) {
+        rotate(TWO_PI / 5);
+        triangle(0, -item.size / 2, item.size / 5, -item.size / 5, 0, 0);
+      }
+    }
+
+    pop();
+  }
+
+  // --- Draw visual effects (sweat drops, exclamations) ---
+  for (let i = effects.length - 1; i >= 0; i--) {
+    let e = effects[i];
+    e.life--;
+
+    if (e.life <= 0) {
+      effects.splice(i, 1);
+      continue;
+    }
+
+    let alpha = map(e.life, 0, 30, 0, 255);
+
+    if (e.type === "sweat") {
+      fill(100, 200, 255, alpha);
+      ellipse(e.x, e.y - (30 - e.life), 6, 8);
+    }
+  }
+
+  // Draw guilt indicator (sweat drop above blob)
+  if (blob3.guilt > 0.3) {
+    let sweatX = blob3.x + 15 + sin(frameCount * 0.2) * 2;
+    let sweatY = blob3.y - blob3.r - 10;
+    fill(100, 200, 255, blob3.guilt * 200);
+    ellipse(sweatX, sweatY, 5, 7);
+  }
+
+  // --- Draw the animated blob with emotional color ---
   blob3.t += blob3.tSpeed;
   drawBlobCircle(blob3);
 
